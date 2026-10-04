@@ -1,0 +1,175 @@
+const express = require('express')
+const dotenv = require('dotenv');
+dotenv.config();
+const bodyParser = require('body-parser')
+const multer = require('multer');
+const storage = multer.memoryStorage(); // uloží binárne dáta do pamäte
+const upload = multer({ storage: storage });
+const authenticateToken = require('./auth'); // import middleware
+const app = express()
+const db = require('./queries')
+const PORT = process.env.PORT || 3000
+const swaggerUi = require('swagger-ui-express');
+const swaggerJsdoc = require('swagger-jsdoc');
+const http = require('http');
+const server = http.createServer(app);
+const socket = require('./socket');
+
+const cors = require('cors');
+app.use(cors({ origin: true, credentials: true }));
+
+
+app.use(bodyParser.json())
+app.use(
+  bodyParser.urlencoded({
+    extended: true,
+  })
+)
+
+app.get('/', (request, response) => {
+    response.json({ info: 'API running' })
+  })
+
+// Testovaci chránený endpoint
+app.get('/protected', authenticateToken, (req, res) => {
+  res.json({ message: 'This is protected data.', user: req.user });
+});
+
+app.get('/verify-token', authenticateToken, (req, res) => {
+  res.status(200).send('Token is valid');//
+});
+
+
+//V Appke pridat posielanie headeru spolu s requestom
+app.get('/flashcard-sets', authenticateToken, db.getFlashcardsSets);//
+app.post('/flashcard-sets', authenticateToken, db.createFlashcardSet);//
+app.get('/flashcard-sets/:set_id', authenticateToken, db.getSingleFlashcardSet);//
+app.get('/flashcard/:flashcard_id', authenticateToken, db.getFlashcardById);
+
+
+//CustomMadeFunctions
+app.post('/register', db.registerUser);//
+app.post('/login', db.loginUser);//
+//app.get('/statistics', authenticateToken, db.getUserStatistics);//
+app.post('/guest-login', db.guestLogin);//
+
+//4.4.2024
+app.delete('/flashcard-sets/:set_id', authenticateToken, db.deleteFlashcardSet);//
+app.put('/flashcard-sets/:set_id', authenticateToken, db.updateFlashcardSet);//
+app.get('/flashcards/:set_id', authenticateToken, db.getFlashcardsBySet);//
+app.post('/flashcards',authenticateToken,
+  upload.fields([
+    { name: 'image_front', maxCount: 1 },
+    { name: 'image_back', maxCount: 1 },
+  ]),
+  db.createFlashcard);//
+app.delete('/flashcards/:flashcard_id',authenticateToken,db.deleteFlashcard)//
+app.put('/flashcards/:flashcard_id',authenticateToken,
+  upload.fields([
+    { name: 'image_front', maxCount: 1 },
+    { name: 'image_back', maxCount: 1 },
+  ]),
+  db.updateFlashcard);//
+app.put('/statistics', authenticateToken, db.updateStatistics);//
+app.post('/statistics/reset', authenticateToken, db.resetStatistics);//
+app.post('/notification-token', authenticateToken, db.saveNotificationToken);//
+app.get('/preferences', authenticateToken, db.getUserPreferences);//
+app.post('/preferences', authenticateToken, db.updateUserPreferences);//
+app.get('/public-sets', db.getPublicSets);//
+app.get('/public-flashcards/:set_id', db.getPublicFlashcardsBySet);//
+app.post('/public-sets', authenticateToken, db.createPublicSet);//
+app.post('/public-flashcards', authenticateToken, upload.fields([
+  { name: 'image_front', maxCount: 1 },
+  { name: 'image_back', maxCount: 1 }
+]), db.createPublicFlashcard);//
+app.delete('/public-sets/:set_id', authenticateToken, db.deletePublicSet);//
+app.delete('/public-flashcards/:flashcard_id', authenticateToken, db.deletePublicFlashcard);//
+
+app.get('/me', authenticateToken, db.getCurrentUser);//
+
+
+
+const { createLearningSession, getUserStatistics } = require('./queries');
+// vloženie sedenia
+app.post('/learning-sessions', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { start_time, end_time, correct_answers, total_answers } = req.body;
+
+    const result = await createLearningSession({
+      userId,
+      start_time,
+      end_time,
+      correct_answers,
+      total_answers
+    });
+
+    const session = result.rows[0];
+    const stats = await getUserStatistics(userId) || {
+      avg_accuracy: 0,
+      total_time_secs: 0,
+      best_streak: 0,
+      current_streak: 0
+    };
+
+    res.status(201).json({ session, statistics: stats });
+  } catch (error) {
+    console.error("❌ Error in POST /learning-sessions:", error);
+    res.status(500).json({ message: "Chyba pri ukladaní učenia" });
+  }
+});
+
+
+// načítanie štatistík
+app.get('/statistics', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const stats = await getUserStatistics(userId) || {
+      avg_accuracy: 0,
+      total_time_secs: 0,
+      best_streak: 0,
+      current_streak: 0
+    };
+
+    console.log("🟡 stats to be returned:", stats);
+    res.json(stats);
+  } catch (error) {
+    console.error("❌ Chyba pri GET /statistics:", error);
+    res.status(500).json({ message: "Chyba pri načítaní štatistík" });
+  }
+});
+
+
+
+
+//DOKUMENTACIA API
+const swaggerOptions = {
+  swaggerDefinition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'StudyBro API',
+      version: '1.0.0',
+      description: 'Dokumentácia REST API pre aplikáciu StudyBro',
+    },
+    servers: [
+      {
+        url: 'http://localhost:3000',
+        description: 'Lokálny vývojový server',
+      },
+    ],
+  },
+  apis: ['./queries.js','./auth.js'], 
+};
+
+const swaggerDocs = swaggerJsdoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+
+
+//SERVER
+const io = socket.init(server); // inicializuj socket.io
+
+server.listen(PORT, () => {
+  console.log(`🟢 Server beží na porte ${PORT}`);
+});
+
+  

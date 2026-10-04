@@ -1,0 +1,21 @@
+# Secrets
+.env
+*.env
+!.env.example
+
+# Firebase configuration with the API key of the original project (see google-services.json.example)
+frontend/android/app/google-services.json
+
+# Generated API documentation (dartdoc), it can be recreated and is not source code
+frontend/doc/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.Rhistory
